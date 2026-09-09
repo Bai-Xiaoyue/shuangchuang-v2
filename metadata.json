@@ -1,0 +1,11 @@
+{
+  "name": "高校双创智能体 - v2",
+  "description": "面向高校双创管理者的全生命周期AI中枢，涵盖海量项目导入、2026国赛智能对标初筛、常态化导师调度、辅导督导闭环、金奖指标数据驾驶舱与三栏联动项目资产管理系统，全新升级产物与审核区（支持文件新增/修改左右对比、双栏同步滚动与划词批注流转）。",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
