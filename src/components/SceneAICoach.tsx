@@ -29,7 +29,6 @@ import SessionGuidePage from './SessionGuidePage';
 import { ProjectSpace, ChatMessage, CoachSession, ReActProcess, DataFlowLog, AssociatedFileItem } from '../types';
 import { mockSessionHistories } from '../data/mockSessionMessages';
 import { ReviewFileItem, ReviewDecision, FileAnnotation, INITIAL_REVIEW_FILES } from '../types/reviewTypes';
-import FileReviewApprovalBar from './review/FileReviewApprovalBar';
 
 const DEFAULT_WORKSPACE_FILES: AssociatedFileItem[] = [
   {
@@ -107,9 +106,10 @@ interface SceneAICoachProps {
   reviewFiles?: ReviewFileItem[];
   activeReviewIndex?: number;
   onSelectReviewIndex?: (index: number) => void;
-  onReviewDecision?: (fileId: string, decision: ReviewDecision) => void;
+  onReviewDecision?: (fileId: string, decision: ReviewDecision, comment?: string) => void;
   onAddAnnotation?: (fileId: string, annotation: { selectedText: string; comment: string; side?: 'old' | 'new' | 'single' }) => void;
   onRemoveAnnotation?: (fileId: string, annotationId: string) => void;
+  onRegisterReviewHandler?: (handler: (fileId: string, decision: ReviewDecision, comment?: string) => void) => void;
 }
 
 export default function SceneAICoach({ 
@@ -136,7 +136,8 @@ export default function SceneAICoach({
   onSelectReviewIndex,
   onReviewDecision,
   onAddAnnotation,
-  onRemoveAnnotation
+  onRemoveAnnotation,
+  onRegisterReviewHandler
 }: SceneAICoachProps) {
   // 1. Core State
   const [internalReviewFiles, setInternalReviewFiles] = useState<ReviewFileItem[]>(INITIAL_REVIEW_FILES);
@@ -159,44 +160,15 @@ export default function SceneAICoach({
     }
   };
 
-  const handleReviewAction = (decision: ReviewDecision) => {
-    if (!currentActiveReviewFile) return;
-
-    if (onReviewDecision) {
-      onReviewDecision(currentActiveReviewFile.id, decision);
-    } else {
-      setInternalReviewFiles(prev => prev.map(f => {
-        if (f.id === currentActiveReviewFile.id) {
-          return {
-            ...f,
-            status: decision,
-            decisionTime: new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
-          };
-        }
-        return f;
-      }));
-      setInternalActiveReviewIndex(prev => {
-        if (prev < reviewFilesList.length - 1) return prev + 1;
-        return prev;
-      });
-    }
-
-    // Auto open right workspace if not open
-    if (onSetRightWorkspaceOpen) {
-      onSetRightWorkspaceOpen(true);
-    }
-
-    // Compose decision message in conversation
-    const fileTitle = currentActiveReviewFile.name;
-    const annCount = currentActiveReviewFile.annotations.length;
+  const postReviewChatMessage = (decision: ReviewDecision, targetFile: ReviewFileItem, comment?: string) => {
+    const fileTitle = targetFile.name;
     let decisionText = '';
     if (decision === 'approved') {
-      decisionText = `【产物审批已通过】我已同意《${fileTitle}》的${currentActiveReviewFile.changeType === 'create' ? '新增' : '修改'}内容，已合并至项目交付物库。`;
+      decisionText = `【产物审批已通过】我已同意《${fileTitle}》的${targetFile.changeType === 'create' ? '新增' : '修改'}内容，已合并至项目交付物库。`;
     } else if (decision === 'rejected') {
-      decisionText = `【产物审批已否决】已否决《${fileTitle}》的${currentActiveReviewFile.changeType === 'create' ? '新增' : '修改'}方案，保留原基准版本。`;
+      decisionText = `【产物审批已否决】已否决《${fileTitle}》的${targetFile.changeType === 'create' ? '新增' : '修改'}方案，保留原基准版本。`;
     } else if (decision === 'improved') {
-      const annDetails = currentActiveReviewFile.annotations.map((a, i) => `${i + 1}. 针对「${a.selectedText}」的批注：“${a.comment}”`).join('\n');
-      decisionText = `【产物批注改进要求】已提出对《${fileTitle}》的改进要求（共 ${annCount} 条批注）：\n${annDetails || '请结合大赛金奖规范进一步润色与论证。'}\n请 Agent 根据上述人类批注进行针对性修改与重构！`;
+      decisionText = `【产物改进要求】已提出对《${fileTitle}》的改进要求：\n${comment || '请结合大赛金奖规范进一步润色与论证。'}\n请 Agent 根据上述意见进行针对性修改与重构！`;
     }
 
     const decisionMsg: ChatMessage = {
@@ -209,7 +181,7 @@ export default function SceneAICoach({
 
     setMessages(prev => [...prev, decisionMsg]);
 
-    // If decision was 'improved', simulate Agent response acknowledging annotations
+    // If decision was 'improved', simulate Agent response acknowledging improvement
     if (decision === 'improved') {
       setIsThinking(true);
       setTimeout(() => {
@@ -218,13 +190,24 @@ export default function SceneAICoach({
           id: `agent-ack-${Date.now()}`,
           sender: 'coach',
           type: 'text',
-          text: `收到！已解析你在《${fileTitle}》中记录的 ${annCount} 条批注。正在针对批注内容与金奖指标对标重新推理并润色生成新版本，请在右侧产物与审核区对比查验！`,
+          text: `收到！已记录针对《${fileTitle}》的改进意见：“${comment || '进一步优化论证'}”。正在结合金奖指标重新推理并润色生成新版本，请稍候在右侧产物区查验！`,
           timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
         };
         setMessages(prev => [...prev, agentAckMsg]);
       }, 900);
     }
   };
+
+  useEffect(() => {
+    if (onRegisterReviewHandler) {
+      onRegisterReviewHandler((fileId: string, decision: ReviewDecision, comment?: string) => {
+        const target = reviewFilesList.find(f => f.id === fileId) || currentActiveReviewFile;
+        if (target) {
+          postReviewChatMessage(decision, target, comment);
+        }
+      });
+    }
+  }, [onRegisterReviewHandler, reviewFilesList, currentActiveReviewFile]);
 
   const [showFlywheelModal, setShowFlywheelModal] = useState<boolean>(false);
   const [bpUploaded, setBpUploaded] = useState<boolean>(true);
@@ -2876,29 +2859,6 @@ export default function SceneAICoach({
             {/* Bottom Docked ChatComposer: Displayed ONLY in Conversation History view */}
             <div className="sticky bottom-0 px-4 sm:px-6 py-3 sm:py-4 bg-[#FBFBFC] flex-shrink-0 flex justify-center border-t border-slate-100/80 z-10">
               <div className="w-full max-w-4xl">
-                {/* 产物与审核区三选项审批窗口：当新增或修改文件时，在会话界面与输入窗之间出现，审批完全部文件后消失 */}
-                {currentActiveReviewFile && hasPendingReviewFiles && (
-                  <FileReviewApprovalBar
-                    activeFile={currentActiveReviewFile}
-                    currentIndex={currentReviewIndex}
-                    totalFiles={reviewFilesList.length}
-                    onApprove={() => handleReviewAction('approved')}
-                    onReject={() => handleReviewAction('rejected')}
-                    onImprove={() => handleReviewAction('improved')}
-                    onSelectIndex={(idx) => {
-                      if (onSelectReviewIndex) onSelectReviewIndex(idx);
-                      setInternalActiveReviewIndex(idx);
-                      if (onSetRightWorkspaceOpen) onSetRightWorkspaceOpen(true);
-                    }}
-                    isWorkspaceOpen={isRightWorkspaceOpen}
-                    onOpenWorkspace={() => {
-                      if (onSetRightWorkspaceOpen) onSetRightWorkspaceOpen(true);
-                      else if (onToggleRightWorkspace) onToggleRightWorkspace();
-                    }}
-                    allFiles={reviewFilesList}
-                  />
-                )}
-
                 {autoPromptHint && (
                   <div className="mb-2.5 flex items-center justify-between px-3.5 py-2 rounded-xl bg-gradient-to-r from-blue-50 via-indigo-50 to-purple-50 border border-blue-200 text-blue-950 text-xs shadow-2xs">
                     <div className="flex items-center space-x-2 min-w-0">

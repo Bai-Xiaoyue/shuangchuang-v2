@@ -22,8 +22,6 @@ import {
   FileText, 
   Video, 
   Paperclip,
-  ZoomIn,
-  ZoomOut,
   Pin,
   Download,
   Eye,
@@ -34,10 +32,11 @@ import {
   GitCompare,
   PlusCircle,
   MessageSquare,
-  History
+  History,
+  XCircle
 } from 'lucide-react';
 import { AssociatedFileItem } from '../types';
-import { ReviewFileItem, FileAnnotation } from '../types/reviewTypes';
+import { ReviewFileItem, FileAnnotation, ReviewDecision } from '../types/reviewTypes';
 import ReviewFileViewer from './review/ReviewFileViewer';
 
 export const ALL_PROJECT_DELIVERABLES: AssociatedFileItem[] = [
@@ -146,6 +145,7 @@ interface RightWorkspacePanelProps {
   onRemoveAnnotation?: (fileId: string, annotationId: string) => void;
   panelMode?: 'review' | 'deliverables';
   onSetPanelMode?: (mode: 'review' | 'deliverables') => void;
+  onReviewDecision?: (fileId: string, decision: ReviewDecision, comment?: string) => void;
 }
 
 export default function RightWorkspacePanel({
@@ -169,10 +169,13 @@ export default function RightWorkspacePanel({
   onAddAnnotation,
   onRemoveAnnotation,
   panelMode: externalPanelMode,
-  onSetPanelMode
+  onSetPanelMode,
+  onReviewDecision
 }: RightWorkspacePanelProps) {
   const [showDeliverablesMenu, setShowDeliverablesMenu] = useState(false);
   const [internalIsExpandedFull, setInternalIsExpandedFull] = useState(false);
+  const [showImproveModal, setShowImproveModal] = useState<boolean>(false);
+  const [improveComment, setImproveComment] = useState<string>('');
   const [internalPanelMode, setInternalPanelMode] = useState<'review' | 'deliverables'>(
     (reviewFiles && reviewFiles.length > 0) ? 'review' : 'deliverables'
   );
@@ -185,6 +188,44 @@ export default function RightWorkspacePanel({
 
   const activeReviewFile = reviewFiles.length > 0 ? (reviewFiles[activeReviewIndex] || reviewFiles[0]) : null;
   const pendingReviewCount = reviewFiles.filter(f => f.status === 'pending').length;
+
+  // 判断当前文件是否属于审核项且需要审批
+  const isReviewFile = currentMode === 'review' && !!activeReviewFile;
+  const isApprovalNeeded = isReviewFile && activeReviewFile.status === 'pending';
+
+  const handleApprove = () => {
+    const file = activeReviewFile || (reviewFiles.length > 0 ? reviewFiles[0] : null);
+    if (file) {
+      if (onReviewDecision) {
+        onReviewDecision(file.id, 'approved');
+      }
+      showToast(`已同意《${file.name}》并合并至项目交付物库`);
+    }
+  };
+
+  const handleReject = () => {
+    const file = activeReviewFile || (reviewFiles.length > 0 ? reviewFiles[0] : null);
+    if (file) {
+      if (onReviewDecision) {
+        onReviewDecision(file.id, 'rejected');
+      }
+      showToast(`已否决《${file.name}》修改方案，保留原基准版本`);
+    }
+  };
+
+  const handleImproveSubmit = () => {
+    const file = activeReviewFile || (reviewFiles.length > 0 ? reviewFiles[0] : null);
+    const comment = improveComment.trim();
+    if (!comment) return;
+    if (file) {
+      if (onReviewDecision) {
+        onReviewDecision(file.id, 'improved', comment);
+      }
+      showToast(`已提交对《${file.name}》的改进意见`);
+    }
+    setShowImproveModal(false);
+    setImproveComment('');
+  };
   
   // Controlled or uncontrolled support for expanded full state
   const isExpandedFull = externalIsExpandedFull !== undefined ? externalIsExpandedFull : internalIsExpandedFull;
@@ -407,27 +448,115 @@ export default function RightWorkspacePanel({
               </div>
             )}
           </div>
-
-          {/* 开关旧版本按钮 ("旧版本也默认关闭，增加开关旧版本的按钮") */}
-          {currentMode === 'review' && activeReviewFile?.changeType === 'modify' && (
-            <button
-              type="button"
-              onClick={() => setShowOldVersion(prev => !prev)}
-              className={`inline-flex items-center space-x-1.5 px-2.5 py-1.5 rounded-lg text-xs transition-colors cursor-pointer shrink-0 ${
-                showOldVersion
-                  ? 'bg-amber-100 text-amber-900 border border-amber-300 font-semibold'
-                  : 'bg-slate-100 hover:bg-slate-200/80 text-slate-700 border border-slate-200 font-medium'
-              }`}
-              title={showOldVersion ? "收起旧版本" : "展开旧版本对比"}
-            >
-              <History className="h-3.5 w-3.5 text-amber-600" />
-              <span>{showOldVersion ? '收起旧版' : '对比旧版'}</span>
-            </button>
-          )}
         </div>
 
-        {/* Right side: Window controls (Fullscreen, Close) */}
-        <div className="flex items-center space-x-1 shrink-0">
+        {/* Right side: 审核项 (顶部右对齐) + 审批三按钮 (右对齐) + Window controls */}
+        <div className="flex items-center space-x-2 shrink-0 ml-auto">
+          {/* 顶部右对齐：审核项指示 */}
+          {isReviewFile ? (
+            <div 
+              className="inline-flex items-center space-x-1 px-2.5 py-1 rounded-lg bg-slate-100/90 border border-slate-200 text-xs font-medium font-mono text-slate-700 shrink-0 select-none"
+              title={`当前处于审核模式，共 ${reviewFiles.length} 项待处理`}
+            >
+              <span className="text-slate-500">审核项：</span>
+              <span className="font-bold text-slate-800">{activeReviewIndex + 1} / {reviewFiles.length}</span>
+              {activeReviewFile?.status !== 'pending' && (
+                <span className={`text-[10px] font-sans font-semibold px-1 py-0.2 rounded ml-1 ${
+                  activeReviewFile?.status === 'approved'
+                    ? 'text-emerald-700 bg-emerald-100/80 border border-emerald-200'
+                    : activeReviewFile?.status === 'rejected'
+                      ? 'text-rose-700 bg-rose-100/80 border border-rose-200'
+                      : 'text-sky-700 bg-sky-100/80 border border-sky-200'
+                }`}>
+                  {activeReviewFile?.status === 'approved' ? '已同意' : activeReviewFile?.status === 'rejected' ? '已否决' : '已提改进'}
+                </span>
+              )}
+            </div>
+          ) : (
+            <div 
+              className="inline-flex items-center space-x-1 px-2.5 py-1 rounded-lg bg-slate-50 border border-slate-200/60 text-xs font-medium font-mono text-slate-400 shrink-0 select-none"
+              title="当前文件为标准交付物，无需审批"
+            >
+              <span>审核项：</span>
+              <span className="text-[11px] text-slate-400 font-sans">无需审核</span>
+            </div>
+          )}
+
+          {/* 审批三按钮 (右对齐，不需要审批的文件时变灰变浅色不可点击) */}
+          <button
+            type="button"
+            id="btn-approval-agree"
+            disabled={!isApprovalNeeded}
+            onClick={isApprovalNeeded ? handleApprove : undefined}
+            className={`inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all shrink-0 select-none ${
+              isApprovalNeeded
+                ? 'bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white shadow-2xs hover:shadow-xs cursor-pointer'
+                : 'bg-slate-100 text-slate-400 border border-slate-200/80 cursor-not-allowed shadow-none opacity-60'
+            }`}
+            title={
+              !isReviewFile 
+                ? "当前文件无需审批" 
+                : activeReviewFile?.status === 'approved' 
+                  ? "当前文件已通过审批" 
+                  : activeReviewFile?.status === 'rejected'
+                    ? "当前文件已否决"
+                    : activeReviewFile?.status === 'improved'
+                      ? "当前文件已提交改进意见"
+                      : "同意并合并至交付物库"
+            }
+          >
+            <Check className={`h-3.5 w-3.5 ${isApprovalNeeded ? 'text-white' : 'text-slate-400'}`} />
+            <span>同意</span>
+          </button>
+
+          <button
+            type="button"
+            id="btn-approval-reject"
+            disabled={!isApprovalNeeded}
+            onClick={isApprovalNeeded ? handleReject : undefined}
+            className={`inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all shrink-0 select-none ${
+              isApprovalNeeded
+                ? 'bg-white hover:bg-rose-50 active:bg-rose-100 text-rose-600 hover:text-rose-700 border border-rose-200 shadow-2xs hover:border-rose-300 cursor-pointer'
+                : 'bg-slate-100 text-slate-400 border border-slate-200/80 cursor-not-allowed shadow-none opacity-60'
+            }`}
+            title={
+              !isReviewFile 
+                ? "当前文件无需审批" 
+                : activeReviewFile?.status !== 'pending'
+                  ? "当前文件无需重复处理"
+                  : "否决并退回原版本"
+            }
+          >
+            <XCircle className={`h-3.5 w-3.5 ${isApprovalNeeded ? 'text-rose-600' : 'text-slate-400'}`} />
+            <span>否决</span>
+          </button>
+
+          <button
+            type="button"
+            id="btn-approval-improve"
+            disabled={!isApprovalNeeded}
+            onClick={isApprovalNeeded ? () => setShowImproveModal(true) : undefined}
+            className={`inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all shrink-0 select-none ${
+              isApprovalNeeded
+                ? 'bg-sky-600 hover:bg-sky-700 active:bg-sky-800 text-white shadow-2xs hover:shadow-xs cursor-pointer'
+                : 'bg-slate-100 text-slate-400 border border-slate-200/80 cursor-not-allowed shadow-none opacity-60'
+            }`}
+            title={
+              !isReviewFile 
+                ? "当前文件无需审批" 
+                : activeReviewFile?.status !== 'pending'
+                  ? "当前文件无需重复处理"
+                  : "点击输入改进意见"
+            }
+          >
+            <Sparkles className={`h-3.5 w-3.5 ${isApprovalNeeded ? 'text-amber-300' : 'text-slate-400'}`} />
+            <span>改进</span>
+          </button>
+
+          {/* 分隔线 */}
+          <div className="h-4 w-px bg-slate-200 mx-0.5 shrink-0" />
+
+          {/* Window controls (Fullscreen, Close) */}
           <button
             type="button"
             onClick={toggleFullscreen}
@@ -769,86 +898,100 @@ export default function RightWorkspacePanel({
       </div>
       )}
 
-      {/* ----------------------------------------------------------------- */}
-      {/* 4. BOTTOM STATUS BAR: Contextual Info & Quick Actions             */}
-      {/* ----------------------------------------------------------------- */}
-      <div className="h-9 bg-white border-t border-slate-200 px-4 flex items-center justify-between text-xs text-slate-500 shrink-0 select-none">
-        {currentMode === 'review' && activeReviewFile ? (
-          <>
-            <div className="flex items-center space-x-3">
-              <span className="font-mono text-slate-700 font-semibold">
-                审核项：{activeReviewIndex + 1} / {reviewFiles.length}
-              </span>
-              <span className="text-slate-300">|</span>
-              <span className="text-sky-700 font-medium flex items-center space-x-1.5">
-                <span className="h-1.5 w-1.5 rounded-full bg-sky-500 animate-pulse" />
-                <span>
-                  {activeReviewFile.changeType === 'create'
-                    ? '新增文件展示中 · 选词即可写批注 · 会话区审批同意/否决/改进'
-                    : '修改文件展示中 · 可展开旧版对比与变更说明 · 选词即可写批注'}
-                </span>
-              </span>
-            </div>
-
-            <div className="flex items-center space-x-3 text-[11px] text-slate-500 font-mono">
-              <span>批注数: {activeReviewFile.annotations.length}</span>
-              <span className="text-slate-300">|</span>
-              <span className={activeReviewFile.status === 'pending' ? 'text-amber-600 font-bold' : 'text-emerald-600 font-bold'}>
-                {activeReviewFile.status === 'pending' ? '等待决议' : (
-                  activeReviewFile.status === 'approved' ? '已同意' : (
-                    activeReviewFile.status === 'rejected' ? '已否决' : '已要求改进'
-                  )
-                )}
-              </span>
-            </div>
-          </>
-        ) : (
-          <>
-            <div className="flex items-center space-x-3">
-              <span className="font-mono text-slate-700 font-semibold">第 1 页 / 共 1 页</span>
-              <span className="text-slate-300">|</span>
-              <span className="text-emerald-700 font-medium flex items-center space-x-1">
-                <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
-                <span>AI生成已校对 · 符合2026大赛评审规范</span>
-              </span>
-            </div>
-
-            {/* Zoom & View Controls */}
-            <div className="flex items-center space-x-2.5">
+      {/* 改进意见输入小窗口 (Modal) */}
+      {showImproveModal && (
+        <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-150">
+          <div className="w-full max-w-lg bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden animate-in zoom-in-95 duration-150">
+            {/* Modal Header */}
+            <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between bg-gradient-to-r from-sky-50/60 to-indigo-50/40">
+              <div className="flex items-center space-x-2.5">
+                <div className="h-8 w-8 rounded-xl bg-sky-100 flex items-center justify-center text-sky-600">
+                  <Sparkles className="h-4 w-4 text-sky-600" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-slate-800">输入改进意见</h3>
+                  <p className="text-[11px] text-slate-500 truncate max-w-xs sm:max-w-sm">
+                    针对《{currentFileName}》向智能体提出针对性修改要求
+                  </p>
+                </div>
+              </div>
               <button
                 type="button"
-                onClick={() => setZoomLevel(prev => Math.max(30, prev - 6))}
-                className="p-1 hover:bg-slate-100 rounded text-slate-600 cursor-pointer"
-                title="缩小"
+                onClick={() => setShowImproveModal(false)}
+                className="p-1 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors cursor-pointer"
               >
-                <ZoomOut className="h-3.5 w-3.5" />
-              </button>
-
-              <span className="font-mono text-slate-800 font-semibold w-10 text-center">
-                {zoomLevel}%
-              </span>
-
-              <button
-                type="button"
-                onClick={() => setZoomLevel(prev => Math.min(100, prev + 6))}
-                className="p-1 hover:bg-slate-100 rounded text-slate-600 cursor-pointer"
-                title="放大"
-              >
-                <ZoomIn className="h-3.5 w-3.5" />
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setZoomLevel(48)}
-                className="text-[11px] text-slate-500 hover:text-slate-800 px-1.5 py-0.5 rounded hover:bg-slate-100 cursor-pointer"
-                title="重置缩放为 48%"
-              >
-                适屏
+                <X className="h-4 w-4" />
               </button>
             </div>
-          </>
-        )}
-      </div>
+
+            {/* Modal Body */}
+            <div className="p-5 space-y-4">
+              <div className="space-y-1.5">
+                <label className="block text-xs font-semibold text-slate-700">
+                  具体修改与润色建议 <span className="text-rose-500">*</span>
+                </label>
+                <textarea
+                  value={improveComment}
+                  onChange={(e) => setImproveComment(e.target.value)}
+                  placeholder="请详细描述具体的优化方向或修改意见（例如：补充核心技术壁垒对比、完善商业模式与财务预测数据、强化答辩逻辑结构等）..."
+                  rows={4}
+                  autoFocus
+                  className="w-full text-xs p-3 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 resize-none placeholder:text-slate-400 leading-relaxed text-slate-800"
+                />
+              </div>
+
+              {/* Quick suggestion tags */}
+              <div className="space-y-1.5">
+                <span className="text-[11px] text-slate-500 font-medium">快捷建议参考：</span>
+                <div className="flex flex-wrap gap-1.5">
+                  {[
+                    '补充竞品技术壁垒对比与权威检测数据',
+                    '完善未来三年财务预测与敏感性分析',
+                    '强化路演逻辑，对标国赛金奖精简要点',
+                    '针对行业痛点深化场景化落地应用案例'
+                  ].map((tag) => (
+                    <button
+                      key={tag}
+                      type="button"
+                      onClick={() => {
+                        setImproveComment(prev => prev ? `${prev}\n· ${tag}` : `· ${tag}`);
+                      }}
+                      className="text-[11px] px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-sky-50 hover:text-sky-700 hover:border-sky-200 border border-slate-200/80 text-slate-600 transition-colors cursor-pointer"
+                    >
+                      + {tag}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="px-5 py-3.5 bg-slate-50 border-t border-slate-100 flex items-center justify-between">
+              <span className="text-[11px] text-slate-400 hidden sm:inline">
+                提交后将由双创专家 Agent 重新推理润色
+              </span>
+              <div className="flex items-center space-x-2 ml-auto">
+                <button
+                  type="button"
+                  onClick={() => setShowImproveModal(false)}
+                  className="px-3.5 py-1.5 rounded-xl text-xs font-medium text-slate-600 hover:bg-slate-200/70 transition-colors cursor-pointer"
+                >
+                  取消
+                </button>
+                <button
+                  type="button"
+                  onClick={handleImproveSubmit}
+                  disabled={!improveComment.trim()}
+                  className="px-4 py-1.5 rounded-xl text-xs font-semibold bg-sky-600 hover:bg-sky-700 active:bg-sky-800 disabled:bg-slate-200 disabled:text-slate-400 text-white flex items-center space-x-1.5 transition-all shadow-xs cursor-pointer"
+                >
+                  <Sparkles className="h-3.5 w-3.5" />
+                  <span>提交改进</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </aside>
   );
 }

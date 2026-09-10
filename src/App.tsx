@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import Sidebar, { TabType } from './components/Sidebar';
 import TopHeader from './components/TopHeader';
 import CockpitDashboard from './components/CockpitDashboard';
@@ -110,8 +110,9 @@ export default function App() {
   const [reviewFiles, setReviewFiles] = useState<ReviewFileItem[]>(INITIAL_REVIEW_FILES);
   const [activeReviewIndex, setActiveReviewIndex] = useState<number>(0);
   const [panelMode, setPanelMode] = useState<'review' | 'deliverables'>('review');
+  const reviewCallbackRef = useRef<((fileId: string, decision: ReviewDecision, comment?: string) => void) | null>(null);
 
-  const handleReviewDecision = (fileId: string, decision: ReviewDecision) => {
+  const handleReviewDecision = (fileId: string, decision: ReviewDecision, comment?: string) => {
     setReviewFiles(prev => prev.map(f => {
       if (f.id === fileId) {
         return {
@@ -122,6 +123,10 @@ export default function App() {
       }
       return f;
     }));
+
+    if (reviewCallbackRef.current) {
+      reviewCallbackRef.current(fileId, decision, comment);
+    }
 
     // Auto jump to next review file
     setActiveReviewIndex(prev => {
@@ -629,6 +634,9 @@ export default function App() {
               onReviewDecision={handleReviewDecision}
               onAddAnnotation={handleAddAnnotation}
               onRemoveAnnotation={handleRemoveAnnotation}
+              onRegisterReviewHandler={(handler) => {
+                reviewCallbackRef.current = handler;
+              }}
             />
           )}
 
@@ -821,6 +829,7 @@ export default function App() {
           onRemoveAnnotation={handleRemoveAnnotation}
           panelMode={panelMode}
           onSetPanelMode={setPanelMode}
+          onReviewDecision={handleReviewDecision}
         />
       )}
 
